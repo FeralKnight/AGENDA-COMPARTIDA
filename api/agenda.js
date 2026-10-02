@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { AppError, authenticate, issueSession, verifyPassword, snapshot, mutate } from '../lib/domain.js';
 
 const STATE='state.json';
-async function read(path){try{const r=await get(path,{access:'private',useCache:false});if(!r||r.statusCode!==200)return null;return {data:await new Response(r.stream).json(),etag:r.blob.etag};}catch(e){if(e instanceof BlobNotFoundError)return null;throw e}}
+async function read(path){try{const r=await get(path,{access:'private',useCache:false});if(!r||r.statusCode!==200)return null;return {data:await new Response(r.stream).json(),etag:r.blob.etag.replace(/^"|"$/g,'')};}catch(e){if(e instanceof BlobNotFoundError)return null;throw e}}
 async function write(path,data,etag){return put(path,JSON.stringify(data),{access:'private',addRandomSuffix:false,contentType:'application/json',...(etag?{allowOverwrite:true,ifMatch:etag}:{allowOverwrite:false})})}
 function cookie(token){return `agenda_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${token?604800:0}`}
 function tokenOf(req){return (req.headers.cookie||'').split(';').map(s=>s.trim()).find(s=>s.startsWith('agenda_session='))?.slice(15)||''}
