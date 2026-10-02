@@ -3,13 +3,14 @@ import { createHash } from 'node:crypto';
 import { AppError, authenticate, issueSession, verifyPassword, snapshot, mutate } from '../lib/domain.js';
 
 const STATE='state.json';
-async function read(path){
+async function read(path,stable=false){
   try{
     for(let attempt=0;attempt<4;attempt++){
-      const before=await head(path);
+      const before=stable?await head(path):null;
       const r=await get(path,{access:'private',useCache:false});
       if(!r||r.statusCode!==200)return null;
       const data=await new Response(r.stream).json();
+      if(!stable)return {data};
       const after=await head(path);
       if(before.etag===after.etag)return {data,etag:after.etag};
     }
@@ -22,7 +23,7 @@ function tokenOf(req){return (req.headers.cookie||'').split(';').map(s=>s.trim()
 async function throttle(req,email){
   const ip=String(req.headers['x-vercel-forwarded-for']||req.headers['x-forwarded-for']||req.socket?.remoteAddress||'unknown').split(',')[0];
   const key=createHash('sha256').update(ip+'|'+email).digest('hex');const path='rate/'+key+'.json';
-  for(let n=0;n<4;n++){const previous=await read(path);const now=Date.now();const data=previous?.data?.until>now?previous.data:{count:0,until:now+15*60*1000};if(data.count>=8)throw new AppError(429,'Demasiados intentos. Espera 15 minutos antes de volver a entrar.');data.count++;try{await write(path,data,previous?.etag);return;}catch(e){if(e instanceof BlobPreconditionFailedError||/already exists/i.test(e.message))continue;throw e;}}
+  for(let n=0;n<4;n++){const previous=await read(path,true);const now=Date.now();const data=previous?.data?.until>now?previous.data:{count:0,until:now+15*60*1000};if(data.count>=8)throw new AppError(429,'Demasiados intentos. Espera 15 minutos antes de volver a entrar.');data.count++;try{await write(path,data,previous?.etag);return;}catch(e){if(e instanceof BlobPreconditionFailedError||/already exists/i.test(e.message))continue;throw e;}}
   throw new AppError(429,'Espera un momento y vuelve a intentar.');
 }
 export default async function handler(req,res){
@@ -36,7 +37,7 @@ export default async function handler(req,res){
     }
     const b=req.method==='POST'?(typeof req.body==='string'?JSON.parse(req.body):req.body):{};
     if(req.method==='POST'&&(!b||typeof b!=='object'||Array.isArray(b)))throw new AppError(400,'Solicitud inválida.');
-    const loaded=await read(STATE);if(!loaded)throw new AppError(503,'El guardado está preparando sus cuentas. Intenta nuevamente en un momento.');
+    const loaded=await read(STATE,req.method==='POST'&&b.action!=='login');if(!loaded)throw new AppError(503,'El guardado está preparando sus cuentas. Intenta nuevamente en un momento.');
     if(b.action==='login'){
       const email=String(b.email||'').trim().toLowerCase();if(email.length>254||typeof b.password!=='string'||b.password.length>256)throw new AppError(400,'Revisa el correo y la contraseña.');
       await throttle(req,email);
@@ -50,7 +51,7 @@ export default async function handler(req,res){
     for(let n=0;n<4;n++){
       account=authenticate(base.data,token);mutate(base.data,account,b);
       try{await write(STATE,base.data,base.etag);if(b.action==='logout')res.setHeader('Set-Cookie',cookie(''));return res.status(200).json(b.action==='logout'?{ok:true}:snapshot(base.data,account));}
-      catch(e){if(!(e instanceof BlobPreconditionFailedError))throw e;base=await read(STATE);if(!base)throw new AppError(503,'El guardado no está disponible.');}
+      catch(e){if(!(e instanceof BlobPreconditionFailedError))throw e;base=await read(STATE,true);if(!base)throw new AppError(503,'El guardado no está disponible.');}
     }
     throw new AppError(409,'Hubo otro cambio al mismo tiempo. Vuelve a intentar.');
   }catch(e){
