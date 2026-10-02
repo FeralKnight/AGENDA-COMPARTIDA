@@ -1,0 +1,1 @@
+{"name":"agenda-compartida","version":"1.0.0","private":true,"type":"module","engines":{"node":"24.x"},"dependencies":{"@vercel/blob":"2.8.0"},"scripts":{"test":"node --test tests/*.test.mjs"}}
